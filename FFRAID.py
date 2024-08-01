@@ -13,12 +13,15 @@ import multiprocessing
 import ollama
 #from llama import chat_loop
 
+
 # Set up logging to suppress YOLOv10 output
 logging.getLogger("ultralytics").setLevel(logging.ERROR)
 
 # Load the model
 model = YOLO("yolov10n.pt")
 app = typer.Typer()
+#create tracker
+tracker = cv2.TrackerKCF_create()
 
 category_dict = {
     0: 'person', 1: 'bicycle', 2: 'car', 3: 'motorcycle', 4: 'airplane', 5: 'bus',
@@ -38,9 +41,9 @@ category_dict = {
     72: 'refrigerator', 73: 'book', 74: 'clock', 75: 'vase', 76: 'scissors',
     77: 'teddy bear', 78: 'hair drier', 79: 'toothbrush'
 }
-sight = []
+frame_switch = False
 def process_webcam():
-    global sight
+    global frame_switch
     cap = cv2.VideoCapture(0)  # 0 is typically the default webcam
     # Set webcam resolution to 1080p
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
@@ -61,10 +64,14 @@ def process_webcam():
         detections = sv.Detections.from_ultralytics(results)
         for box, class_id, confidence in zip(detections.xyxy, detections.class_id, detections.confidence):
             if confidence >= confidence_threshold:
-                class_name = category_dict.get(class_id, "Unknown")
-                if len(sight) >= 5:
-                    sight.pop()  # Remove the oldest item (last element)
-                sight.insert(0, class_name)  # Add the newest item to the front
+                if class_id in category_dict:
+                    class_name = category_dict[class_id]
+                else:
+                    class_name = "Unknown"  # Assign the custom label for unclassified objects
+                #save frame
+                if frame_switch is True:
+                    cv2.imwrite("screen.jpg", frame)
+                    frame_switch = False
 
                 x, y, w, h = int(box[0]), int(box[1]), int(box[2]), int(box[3])
                 center_x = x + w // 2
@@ -75,6 +82,8 @@ def process_webcam():
                 cv2.putText(frame, f"{class_name}: {confidence:.2f}", (x + 20, y),
                             cv2.FONT_HERSHEY_TRIPLEX, 0.7, circle_color, 2)
 
+
+
         cv2.imshow("Webcam", frame)
         if cv2.waitKey(25) & 0xFF == ord("q"):
             break
@@ -84,8 +93,8 @@ def process_webcam():
 
 def chat_loop():
     conversation = []  # Initialize an empty conversation list
-    conversation.append({"role": "user", "content": "Hi, Im hooking you up to an object detection model. When I say purple potato you will receive pre-processed suggestions from what another language model sees so you dont have to do all the thinking tell me what you think about what you see and give me insight if you see fit. So, purple potato is like a magic word that tells the other language model to do its thing and provide some additional context or suggestions based on what it sees."})
-    conversation.append({"role": "assistant", "content": "ok I will, i will explain to you what the other model gives me and offer my technical assistance with anything you need help with"})
+    conversation.append({"role": "user", "content": "Hi, Im hooking you up to a visual Aid that will Analyze the room for you. When I say purple potato you will receive a pre-processed description from what another language model sees so you dont have to do all the thinking tell me what you think about what you see and give me insight if you see fit. So, purple potato is like a magic word that tells the other language model to do its thing and describe what it sees. Im a guy with blonde hair in case im in the pictures because they're taken from a live feed of the room right now."})
+    conversation.append({"role": "assistant", "content": "ok I will, i will explain to you what the other model gives me and offer my technical assistance with anything you need help with, I will also let you know if i see you because you're a guy with blonde hair"})
     while True:
         user_input = input("You: ")  # Get user input
 
@@ -110,22 +119,21 @@ def chat_loop():
 
 
 def data_model():
-    global sight
-    data_conversation = []  # Initialize an empty conversation list
-
-    final_words = ' '.join(sight)
-
-
-    user_input = final_words  # Get user input
-    data_conversation.append({"role": "user", "content": user_input})  # Add user message to the conversation
-
-    # Chat with the model
-    response = ollama.chat(model="preProcessor", messages=data_conversation)
-    #print(f"preProcess: {response['message']['content']}")  # Print the model's response
-
-    # Add the model's response to the conversation
-    data_conversation.append({"role": "assistant", "content": response["message"]["content"]})
-    return response["message"]["content"]
+    global frame_switch
+    frame_switch = True
+    time.sleep(3)
+    res = ollama.chat(
+        model="ImageProcessing",
+        messages=[
+            {
+                'role': 'user',
+                'content': 'Describe this image:',
+                'images': ['./screen.jpg']
+            }
+        ]
+    )
+    print(res["message"]["content"])
+    return res["message"]["content"]
 
 
 if __name__ == "__main__":
@@ -137,8 +145,6 @@ if __name__ == "__main__":
     object_detection_thread.start()
     chat_thread.start()
 
-    data_thread = threading.Thread(target=data_model)
-    data_thread.start()
 
     # Wait for both threads to finish
     object_detection_thread.join()
